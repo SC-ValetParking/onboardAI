@@ -1,12 +1,33 @@
-# -*- coding: utf-8 -*-
+from enum import Enum
 
-import yaml
-import numpy as np
 import cv2
+import firebase_admin
+import numpy as np
+import yaml
+from firebase_admin import credentials
+from firebase_admin import firestore
+
+
+class SpecialType(Enum):
+    DISABLED = 0
+    LIGHT = 1
+    ELECTRIC = 2
+
+
+# Use a service account.
+cred = credentials.Certificate(
+    'C:/Users/ehddp/Downloads/Parking Detection-20221122T094625Z-001/Parking Detection/Python Program/Python Program/datasets/test.json')
+
+app = firebase_admin.initialize_app(cred)
+
+db = firestore.client()
+
+parkingList = []
+specialDic = {14: SpecialType.DISABLED.value, 15: SpecialType.LIGHT.value}
 
 area = 12
-fn_yaml = r"file_route\parking2.yml"
-fn_out = r"file_route\output.avi"
+fn_yaml = r"C:\Users\ehddp\Downloads\Parking Detection-20221122T094625Z-001\Parking Detection\Python Program\Python Program\datasets\parking2.yml"
+fn_out = r"C:\Users\ehddp\Downloads\Parking Detection-20221122T094625Z-001\Parking Detection\Python Program\Python Program\datasets\output.avi"
 config = {'save_video': False,
           'text_overlay': True,
           'parking_overlay': True,
@@ -45,7 +66,7 @@ for park in parking_data:
     mask = mask == 255
     parking_mask.append(mask)
 
-parking_status = [False] * len(parking_data)
+parking_status = [True] * len(parking_data)
 parking_buffer = [None] * len(parking_data)
 
 print(
@@ -86,14 +107,32 @@ while (cap.isOpened()):
             # If status is still different than the one saved and counter is open
             elif status != parking_status[ind] and parking_buffer[ind] != None:
                 if video_cur_pos - parking_buffer[ind] > config['park_sec_to_wait']:
-                    print(ind + 1)
+                    id = ind + 1
+                    print(id)
                     print(status)
-                    area = ind + 1
+                    area = id
+
+                    if np.bool(status) is False:
+                        parkingList.append(id)
+                    elif id in parkingList:
+                        del parkingList[parkingList.index(id)]
+                    sorted(parkingList)
+                    print(parkingList)
+
+                    batch = db.batch()
+                    parkingLot_ref = db.collection('ParkingLots').document('DFYo26Fy4HLF0NXtDazJ')
+                    batchDic = {}
+                    for item in parkingList:
+                        batchDic[format(item)] = None
+                    for special in specialDic.items():
+                        batchDic[format(special[0])] = [special[1], True if special[0] in parkingList else False]
+                    batch.update(parkingLot_ref, {'floorArray': [{'parkingMap': batchDic, 'parkingSize': 15}]})
+                    batch.commit()
 
                     parking_status[ind] = status
                     parking_buffer[ind] = None
             # If status is still same and counter is open
-            elif status == parking_status[ind] and parking_buffer[ind] != None:
+            elif status == parking_status[ind] and parking_buffer[ind] is not None:
                 # if video_cur_pos - parking_buffer[ind] > config['park_sec_to_wait']:
                 parking_buffer[ind] = None
             # print(parking_status)
@@ -123,25 +162,9 @@ while (cap.isOpened()):
         # print 'Terisi: ', occupied
         # print 'Area: ', spot
 
-    # Draw Overlay
-    if config['text_overlay']:
-        # cv2.rectangle(frame_out, (1, 5), (280, 70),(255,255,255), 85)
-        cv2.rectangle(frame_out, (1, 5), (300, 70), (0, 255, 0), 2)
-        str_on_frame = "Parking Area Status:"
-        cv2.putText(frame_out, str_on_frame, (5, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2, cv2.LINE_AA)
-        str_on_frame = "Empty space = %d, Occupied = %d" % (spot, occupied)
-        cv2.putText(frame_out, str_on_frame, (5, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2, cv2.LINE_AA)
-        str_on_frame = "Last change area: " + str(area)
-        cv2.putText(frame_out, str_on_frame, (5, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1, cv2.LINE_AA)
-
-    # write the output frame
-    # if config['save_video']:
-    # if video_cur_frame % 35 == 0: # take every 30 frames
-    # out.write(frame_out)
-
     # Display video
     imS = cv2.resize(frame_out, (960, 720))
-    cv2.imshow('Parking detection - by Yaser Ali Husen', imS)
+    cv2.imshow('Parking detection', imS)
     cv2.waitKey(40)
     # cv2.imshow('background mask', bw)
     k = cv2.waitKey(1)
